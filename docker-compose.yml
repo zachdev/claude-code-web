@@ -1,0 +1,102 @@
+services:
+  # ── Claude Code UI (supports Claude, Codex, Gemini agents in one UI) ─────────
+  claudecodeui:
+    image: libzonda/claudecodeui-docker:latest
+    container_name: claudecodeui
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      SERVER_PORT: "3001"
+      DATABASE_PATH: /root/.cloudcli/auth.db
+      # AUTO_UPDATE_CLOUDCLI: update the @cloudcli-ai/cloudcli package on start
+      AUTO_UPDATE_CLOUDCLI: "false"
+      # AUTO_UPDATE_CLI: update the provider CLIs (claude, codex, gemini) on start
+      AUTO_UPDATE_CLI: "false"
+    volumes:
+      - claudecodeui-cloudcli:/root/.cloudcli
+      - claudecodeui-claude:/root/.claude
+      - claudecodeui-codex:/root/.codex
+      - claudecodeui-gemini:/root/.gemini
+      - claudecodeui-plugins:/root/.claude-code-ui
+      - /projects:/projects
+    networks:
+      - nginx-net
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Vibe Coder Server (browser-based IDE with Claude Code + Git) ─────────────
+  vibe-coder:
+    image: siamakerlab/vibe-coder-server:latest
+    container_name: vibe-coder
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - vibe-coder-data:/data
+      - /projects:/projects
+    networks:
+      - nginx-net
+    expose:
+      - "17880"
+
+  # ── Redis (shared session store & caching for all agents) ────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: claude-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    networks:
+      - nginx-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: claude-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-logs:/var/log/nginx
+    networks:
+      - nginx-net
+    depends_on:
+      - claudecodeui
+      - vibe-coder
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  # Claude Code UI session/config persistence
+  claudecodeui-cloudcli:
+  claudecodeui-claude:
+  claudecodeui-codex:
+  claudecodeui-gemini:
+  claudecodeui-plugins:
+  # Vibe Coder persistence
+  vibe-coder-data:
+  # Redis persistence
+  redis-data:
+  # Nginx log persistence
+  nginx-logs:
+
+networks:
+  nginx-net:
+    external: true
+    name: nginx-net
